@@ -1,3 +1,5 @@
+import * as THREE from "three";
+
 const SIMPSONS_INTERVALS = 8;
 const NEWTON_ITERATIONS = 16;
 const RELAXATION_ITERATIONS = 32;
@@ -154,7 +156,7 @@ export default class CubicPath {
       dT_p1, dT_p2, dT_sG
     );
 
-    const [m11, m21, m31, m12, m22, m32, m13, m23, m33] = invJacobian.getInverse(jacobian).elements;
+    const [m11, m21, m31, m12, m22, m32, m13, m23, m33] = invJacobian.copy(jacobian).invert().elements;
 
     this.params.p1 += m11 * deltaX + m12 * deltaY + m13 * deltaRot;
     this.params.p2 += m21 * deltaX + m22 * deltaY + m23 * deltaRot;

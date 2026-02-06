@@ -263,7 +263,7 @@ export default class Editor {
     if (!this.isEnabled) return;
 
     this.raycaster.setFromCamera(this.mouse, this.camera);
-    const intersection = this.raycaster.ray.intersectPlane(GROUND_PLANE);
+    const intersection = this.raycaster.ray.intersectPlane(GROUND_PLANE, new THREE.Vector3());
 
     const [station, latitude, _around] = this.lanePath.stationLatitudeFromPosition(new THREE.Vector2(intersection.x, intersection.z));
     this.statsStation.textContent = (station || 0).toFixed(1);
@@ -541,7 +541,7 @@ export default class Editor {
           this.dragOffset.copy(picked.object.position).sub(picked.point);
         }
       } else if (!this.removeMode) {
-        const intersection = this.raycaster.ray.intersectPlane(GROUND_PLANE);
+        const intersection = this.raycaster.ray.intersectPlane(GROUND_PLANE, new THREE.Vector3());
         if (intersection != null) {
           this.addPoint(new THREE.Vector2(intersection.x, intersection.z));
           this.rebuildPathGeometry();
@@ -570,7 +570,7 @@ export default class Editor {
           }
         }
       } else if (!this.removeMode && !this.rotateMode) {
-        const intersection = this.raycaster.ray.intersectPlane(GROUND_PLANE);
+        const intersection = this.raycaster.ray.intersectPlane(GROUND_PLANE, new THREE.Vector3());
         if (intersection != null) {
           this.draggingObstacle = true;
           this.dragOffset.copy(intersection);
@@ -596,7 +596,7 @@ export default class Editor {
 
       this.raycaster.setFromCamera(this.mouse, this.camera);
 
-      const intersection = this.raycaster.ray.intersectPlane(GROUND_PLANE);
+      const intersection = this.raycaster.ray.intersectPlane(GROUND_PLANE, new THREE.Vector3());
       if (intersection != null) {
         const [center, width, height] = this._dimensionsFromRect(this.dragOffset, intersection);
         this.addStaticObstacle(center, width, height);

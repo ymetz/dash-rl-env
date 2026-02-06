@@ -188,7 +188,7 @@ export default class PathPlanner {
       }
     }
 
-    const inverseVehicleXform = (new THREE.Matrix3()).getInverse(vehicleXform);
+    const inverseVehicleXform = (new THREE.Matrix3()).copy(vehicleXform).invert();
     let bestTrajectory = null;
     let fromVehicleSegment = null;
     let fromVehicleParams = null;

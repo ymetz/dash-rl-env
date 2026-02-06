@@ -27,7 +27,7 @@ export default class TopDownCameraControls {
     lookAt.applyQuaternion(prevCamera.quaternion);
 
     const ray = new THREE.Ray(prevCamera.position, lookAt);
-    const intersection = ray.intersectPlane(groundPlane);
+    const intersection = ray.intersectPlane(groundPlane, new THREE.Vector3());
 
     if (intersection) {
       this.camera.position.set(intersection.x, 50, intersection.z);

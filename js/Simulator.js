@@ -38,7 +38,7 @@ export default class Simulator {
     domElement.appendChild(this.renderer.domElement);
 
     this.lastPlanParams = null;
-    this.renderer.context.canvas.addEventListener('webglcontextlost', event => {
+    this.renderer.getContext().canvas.addEventListener('webglcontextlost', event => {
       console.log('Simulator: webgl context lost');
       console.log(event);
       console.log(this.lastPlanParams);

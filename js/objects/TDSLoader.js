@@ -360,7 +360,7 @@ THREE.TDSLoader.prototype = {
 
 					}
 
-					geometry.addAttribute( 'position', new THREE.BufferAttribute( new Float32Array( vertices ), 3 ) );
+					geometry.setAttribute( 'position', new THREE.BufferAttribute( new Float32Array( vertices ), 3 ) );
 
 				} else	{ //Geometry
 
@@ -394,7 +394,7 @@ THREE.TDSLoader.prototype = {
 						uvs.push( this.readFloat( data ) );
 
 					}
-					geometry.addAttribute( 'uv', new THREE.BufferAttribute( new Float32Array( uvs ), 2 ) );
+					geometry.setAttribute( 'uv', new THREE.BufferAttribute( new Float32Array( uvs ), 2 ) );
 
 				} else { //Geometry
 
@@ -447,8 +447,8 @@ THREE.TDSLoader.prototype = {
 				matrix.transpose();
 
 				var inverse = new THREE.Matrix4();
-				inverse.getInverse( matrix, true );
-				geometry.applyMatrix( inverse );
+				inverse.copy( matrix ).invert();
+				geometry.applyMatrix4( inverse );
 
 				matrix.decompose( mesh.position, mesh.quaternion, mesh.scale );
 

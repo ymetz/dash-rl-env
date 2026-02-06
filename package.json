@@ -12,6 +12,9 @@
     "vite": "^5.4.14"
   },
   "dependencies": {
-    "three": "0.124.0"
+    "@fortawesome/fontawesome-free": "^7.1.0",
+    "bulma": "^1.0.4",
+    "three": "0.124.0",
+    "three.meshline": "^1.4.0"
   }
 }

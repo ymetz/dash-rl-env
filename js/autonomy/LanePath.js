@@ -1,3 +1,5 @@
+import * as THREE from "three";
+
 const halfLaneWidth = 3.7;
 
 const centerlineGeometry = new THREE.Geometry();
