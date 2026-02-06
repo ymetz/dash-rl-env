@@ -2,10 +2,6 @@ import * as THREE from "three";
 
 const halfLaneWidth = 3.7;
 
-const centerlineGeometry = new THREE.Geometry();
-const leftBoundaryGeometry = new THREE.Geometry();
-const rightBoundaryGeometry = new THREE.Geometry();
-
 export default class LanePath {
   static hydrate(obj) {
     Object.setPrototypeOf(obj, LanePath.prototype);

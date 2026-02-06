@@ -14,7 +14,6 @@
   "dependencies": {
     "@fortawesome/fontawesome-free": "^7.1.0",
     "bulma": "^1.0.4",
-    "three": "0.124.0",
-    "three.meshline": "^1.4.0"
+    "three": "0.182.0"
   }
 }

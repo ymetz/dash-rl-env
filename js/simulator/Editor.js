@@ -4,6 +4,9 @@ import DynamicObstacleEditor from "./DynamicObstacleEditor.js";
 import ScenarioManager from "./ScenarioManager.js";
 import ShareManager from "./ShareManager.js";
 import { formatDate } from "../Helpers.js";
+import { Line2 } from "three/examples/jsm/lines/Line2.js";
+import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 
 const GROUND_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0));
 
@@ -36,9 +39,9 @@ export default class Editor {
     this.scenarioManager = new ScenarioManager(this);
     this.shareManager = new ShareManager();
 
-    this.centerlineGeometry = new THREE.Geometry();
-    this.leftBoundaryGeometry = new THREE.Geometry();
-    this.rightBoundaryGeometry = new THREE.Geometry();
+    this.centerlineGeometry = new THREE.BufferGeometry();
+    this.leftBoundaryGeometry = new THREE.BufferGeometry();
+    this.rightBoundaryGeometry = new THREE.BufferGeometry();
     this.draggingObstaclePreview = null;
 
     this.group = new THREE.Group();
@@ -113,47 +116,49 @@ export default class Editor {
     document.addEventListener('keyup', this.keyUp.bind(this));
 
     const resolution = new THREE.Vector2(this.canvas.clientWidth, this.canvas.clientHeight);
-    this.centerlineObject = new THREE.Mesh(
-      new THREE.Geometry(),
-      new MeshLineMaterial({
+    this.centerlineObject = new Line2(
+      new LineGeometry(),
+      new LineMaterial({
         color: new THREE.Color(0x004488),
-        lineWidth: 8,
+        linewidth: 8,
         resolution: resolution,
-        sizeAttenuation: false,
-        near: camera.near,
-        far: camera.far,
+        worldUnits: false,
+        depthTest: false,
         depthWrite: false
       })
     );
-    this.centerlineObject.rotation.x = Math.PI / 2;
     this.centerlineObject.renderOrder = 1;
     this.group.add(this.centerlineObject);
 
-    this.leftBoundaryObject = new THREE.Mesh(
-      new THREE.Geometry(),
-      new MeshLineMaterial({
+    this.leftBoundaryObject = new Line2(
+      new LineGeometry(),
+      new LineMaterial({
         color: new THREE.Color(0xff40ff),
-        lineWidth: 0.15,
+        linewidth: 4,
         resolution: resolution,
+        worldUnits: false,
+        depthTest: false,
+        depthWrite: false,
         transparent: true,
         opacity: 0.7
       })
     );
-    this.leftBoundaryObject.rotation.x = Math.PI / 2;
     this.leftBoundaryObject.renderOrder = 1;
     this.group.add(this.leftBoundaryObject);
 
-    this.rightBoundaryObject = new THREE.Mesh(
-      new THREE.Geometry(),
-      new MeshLineMaterial({
+    this.rightBoundaryObject = new Line2(
+      new LineGeometry(),
+      new LineMaterial({
         color: new THREE.Color(0xff40ff),
-        lineWidth: 0.15,
+        linewidth: 4,
         resolution: resolution,
+        worldUnits: false,
+        depthTest: false,
+        depthWrite: false,
         transparent: true,
         opacity: 0.7
       })
     );
-    this.rightBoundaryObject.rotation.x = Math.PI / 2;
     this.rightBoundaryObject.renderOrder = 1;
     this.group.add(this.rightBoundaryObject);
 
@@ -162,9 +167,9 @@ export default class Editor {
       // This gets around some weirdness noticed when opening and closing Chrome Developer Tools.
       setTimeout(() => {
         const resolution = new THREE.Vector2(this.canvas.clientWidth, this.canvas.clientHeight);
-        this.centerlineObject.material.uniforms.resolution.value = resolution;
-        this.leftBoundaryObject.material.uniforms.resolution.value = resolution;
-        this.rightBoundaryObject.material.uniforms.resolution.value = resolution;
+        this.centerlineObject.material.resolution.copy(resolution);
+        this.leftBoundaryObject.material.resolution.copy(resolution);
+        this.rightBoundaryObject.material.resolution.copy(resolution);
       }, 0);
     });
   }
@@ -411,30 +416,40 @@ export default class Editor {
   }
 
   rebuildPathGeometry() {
+    const toLinePositions = points => {
+      const positions = new Array(points.length * 3);
+      for (let i = 0; i < points.length; i++) {
+        positions[i * 3] = points[i].x;
+        positions[i * 3 + 1] = 0;
+        positions[i * 3 + 2] = points[i].y;
+      }
+      return positions;
+    };
+
     if (this.lanePath.anchors.length > 1) {
-      this.centerlineGeometry.setFromPoints(this.lanePath.centerline);
-      const centerline = new MeshLine();
-      centerline.setGeometry(this.centerlineGeometry);
-      this.centerlineObject.geometry = centerline.geometry;
+      this.centerlineGeometry = new LineGeometry();
+      this.centerlineGeometry.setPositions(toLinePositions(this.lanePath.centerline));
+      this.centerlineObject.geometry.dispose();
+      this.centerlineObject.geometry = this.centerlineGeometry;
 
-      this.leftBoundaryGeometry.setFromPoints(this.lanePath.leftBoundary);
-      const leftBoundary = new MeshLine();
-      leftBoundary.setGeometry(this.leftBoundaryGeometry);
-      this.leftBoundaryObject.geometry = leftBoundary.geometry;
+      this.leftBoundaryGeometry = new LineGeometry();
+      this.leftBoundaryGeometry.setPositions(toLinePositions(this.lanePath.leftBoundary));
+      this.leftBoundaryObject.geometry.dispose();
+      this.leftBoundaryObject.geometry = this.leftBoundaryGeometry;
 
-      this.rightBoundaryGeometry.setFromPoints(this.lanePath.rightBoundary);
-      const rightBoundary = new MeshLine();
-      rightBoundary.setGeometry(this.rightBoundaryGeometry);
-      this.rightBoundaryObject.geometry = rightBoundary.geometry;
+      this.rightBoundaryGeometry = new LineGeometry();
+      this.rightBoundaryGeometry.setPositions(toLinePositions(this.lanePath.rightBoundary));
+      this.rightBoundaryObject.geometry.dispose();
+      this.rightBoundaryObject.geometry = this.rightBoundaryGeometry;
     } else {
       this.centerlineObject.geometry.dispose();
-      this.centerlineObject.geometry = new THREE.Geometry();
+      this.centerlineObject.geometry = new LineGeometry();
 
       this.leftBoundaryObject.geometry.dispose();
-      this.leftBoundaryObject.geometry = new THREE.Geometry();
+      this.leftBoundaryObject.geometry = new LineGeometry();
 
       this.rightBoundaryObject.geometry.dispose();
-      this.rightBoundaryObject.geometry = new THREE.Geometry();
+      this.rightBoundaryObject.geometry = new LineGeometry();
     }
 
     this.statsRoadLength.textContent = this.lanePath.arcLength.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });

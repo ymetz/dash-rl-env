@@ -41,7 +41,7 @@ export default class MapObject extends THREE.Object3D {
       for (let y = -MapObject.HALF_NUM_TILES; y < MapObject.HALF_NUM_TILES; y++, h++) {
         const tileTexture = new THREE.TextureLoader().load(`https://khms${h % 4}.google.com/kh/v=748?x=${originTile[0] + x}&y=${originTile[1] + y}&z=${MapObject.ZOOM}`);
         tileTexture.anisotropy = 16;
-        const tileGeometry = new THREE.PlaneBufferGeometry(tileSize, tileSize);
+        const tileGeometry = new THREE.PlaneGeometry(tileSize, tileSize);
         const tileMaterial = new THREE.MeshBasicMaterial({ map: tileTexture, color: 0xffffff });
         const tile = new THREE.Mesh(tileGeometry, tileMaterial);
         tile.rotation.x = -Math.PI / 2;

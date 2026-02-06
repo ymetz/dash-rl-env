@@ -19,6 +19,9 @@ import StaticObstacle from "./autonomy/StaticObstacle.js";
 import DynamicObstacle from "./autonomy/DynamicObstacle.js";
 import MovingAverage from "./autonomy/MovingAverage.js";
 import PathPlannerConfigEditor from "./simulator/PathPlannerConfigEditor.js";
+import { Line2 } from "three/examples/jsm/lines/Line2.js";
+import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 
 const WELCOME_MODAL_KEY = 'dash_WelcomeModal';
 
@@ -251,9 +254,18 @@ export default class Simulator {
 
   _resetChaseCamera() {
     const pos = this.car.position;
+    this.chaseCamera.up.set(0, 1, 0);
+
     const dirVector = THREE.Vector2.fromAngle(this.car.rotation).multiplyScalar(-20);
     this.chaseCamera.position.set(pos.x + dirVector.x, 8, pos.y + dirVector.y);
+    this.chaseCameraControls.target.set(pos.x, 0, pos.y);
     this.chaseCamera.lookAt(pos.x, 0, pos.y);
+
+    // Synchronize OrbitControls baseline to this exact pose so load/reset
+    // cannot reuse stale orbit radius/angles from previous camera state.
+    this.chaseCameraControls.saveState();
+    this.chaseCameraControls.reset();
+    this.chaseCameraControls.update();
   }
 
   _resetTopDownCamera() {
@@ -357,8 +369,8 @@ export default class Simulator {
         this.changeCamera('chase');
     }
 
-    this._resetFreeCamera();
     this._resetChaseCamera();
+    this._resetFreeCamera();
     this._resetTopDownCamera();
   }
 
@@ -657,17 +669,22 @@ export default class Simulator {
     else
       this.autonomousCarController = new FollowController(followPath, this.car);
 
-    const pathGeometry = new THREE.Geometry();
-    pathGeometry.setFromPoints(path.map(p => new THREE.Vector3(p.pos.x, 0, p.pos.y)));
-    const pathLine = new MeshLine();
-    pathLine.setGeometry(pathGeometry);
+    const linePositions = new Array(path.length * 3);
+    for (let i = 0; i < path.length; i++) {
+      linePositions[i * 3] = path[i].pos.x;
+      linePositions[i * 3 + 1] = 0;
+      linePositions[i * 3 + 2] = path[i].pos.y;
+    }
+    const pathGeometry = new LineGeometry();
+    pathGeometry.setPositions(linePositions);
 
     const color = fromVehicleParams.type == 'cubic' ? new THREE.Color(0xff8800) : new THREE.Color(0xffff40);
-    const pathObject = new THREE.Mesh(
-      pathLine.geometry,
-      new MeshLineMaterial({
+    const pathObject = new Line2(
+      pathGeometry,
+      new LineMaterial({
         color: color,
-        lineWidth: 0.15,
+        linewidth: 0.15,
+        worldUnits: true,
         resolution: new THREE.Vector2(this.renderer.domElement.clientWidth, this.renderer.domElement.clientHeight)
       })
     );

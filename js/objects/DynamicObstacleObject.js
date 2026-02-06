@@ -26,7 +26,7 @@ export default class DynamicObstacleObject extends THREE.Object3D {
     this.add(mesh2D);
 
     const mesh3D = new THREE.Mesh(
-      new THREE.BoxBufferGeometry(dynamicObstacle.size.w * 2, heights[dynamicObstacle.type] || 1.5, dynamicObstacle.size.h * 2),
+      new THREE.BoxGeometry(dynamicObstacle.size.w * 2, heights[dynamicObstacle.type] || 1.5, dynamicObstacle.size.h * 2),
       new THREE.MeshToonMaterial({ color: colors[dynamicObstacle.type] || 0xff8800, transparent: true, opacity: 0.7 })
     );
     mesh3D.position.setY((heights[dynamicObstacle.type] || 1.5) / 2);

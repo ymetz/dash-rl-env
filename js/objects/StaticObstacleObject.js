@@ -14,7 +14,7 @@ export default class StaticObstacleObject extends THREE.Object3D {
     this.add(mesh2D);
 
     const mesh3D = new THREE.Mesh(
-      new THREE.BoxBufferGeometry(staticObstacle.width, HEIGHT, staticObstacle.height),
+      new THREE.BoxGeometry(staticObstacle.width, HEIGHT, staticObstacle.height),
       new THREE.MeshToonMaterial({ color: COLOR, transparent: true, opacity: 0.5 })
     );
     mesh3D.position.setY(HEIGHT / 2);
