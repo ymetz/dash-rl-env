@@ -124,6 +124,29 @@ Preview the production bundle locally:
 npm run preview
 ```
 
+## Gymnasium Wrapper (Python)
+
+This repo includes a Python Gymnasium wrapper in `python/dash_gym_env.py` that drives the browser simulator through Playwright.
+
+Install Python dependencies:
+
+```
+pip install -r python/requirements.txt
+python -m playwright install chromium
+```
+
+Run the random-policy example:
+
+```
+python python/example_random_policy.py
+```
+
+The wrapper exposes standard Gym methods (`reset`, `step`, `close`) and helper methods for teleop recording:
+
+- `start_human_recording(...)`
+- `stop_human_recording()`
+- `save_human_recording(path)`
+
 ## License
 
 Dash is [MIT licensed](./LICENSE).

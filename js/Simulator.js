@@ -18,8 +18,12 @@ import PathPlannerConfigEditor from "./simulator/PathPlannerConfigEditor.js";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
+import Car from "./physics/Car.js";
 
 const WELCOME_MODAL_KEY = 'dash_WelcomeModal';
+const RL_DEFAULT_DT = 1 / 60;
+const RL_DEFAULT_ACTION_REPEAT = 6;
+const RL_DEFAULT_MAX_STEPS = 2000;
 
 export default class Simulator {
   constructor(domElement) {
@@ -89,6 +93,35 @@ export default class Simulator {
     this.simulatedTime = 0;
     this.lastPlanTime = null;
     this.averagePlanTime = new MovingAverage(20);
+    this.lastAppliedControls = { steer: 0, brake: 0, gas: 0 };
+
+    this.rlConfig = {
+      dt: RL_DEFAULT_DT,
+      actionRepeat: RL_DEFAULT_ACTION_REPEAT,
+      maxSteps: RL_DEFAULT_MAX_STEPS,
+      lanePenaltyWeight: 0.02,
+      steerPenaltyWeight: 0.01,
+      brakePenaltyWeight: 0.005,
+      collisionPenalty: 10,
+      offroadPenalty: 5
+    };
+    this.rlEpisodeStep = 0;
+    this.rlLastStation = 0;
+    this.rlLastSteer = 0;
+
+    this.trajectoryRecorder = {
+      enabled: false,
+      frames: []
+    };
+    this.humanRecorder = {
+      enabled: false,
+      requireManualMode: true,
+      sampleInterval: 0.1,
+      elapsed: 0,
+      lastStation: 0,
+      lastSteer: 0,
+      frames: []
+    };
 
     window.addEventListener('resize', e => {
       this._updateCameraAspects(domElement.clientWidth / domElement.clientHeight);
@@ -115,6 +148,12 @@ export default class Simulator {
     this.scenarioPauseButton.addEventListener('click', this.pauseScenario.bind(this));
     this.scenarioRestartButton = document.getElementById('scenario-restart');
     this.scenarioRestartButton.addEventListener('click', this.restartScenario.bind(this));
+    this.teleopRecordStartButton = document.getElementById('teleop-record-start');
+    this.teleopRecordStopButton = document.getElementById('teleop-record-stop');
+    this.teleopRecordCountDom = document.getElementById('teleop-record-count');
+    this.teleopRecordStartButton.addEventListener('click', () => this.startHumanTeleopRecording({ sampleHz: 10, clear: true, requireManualMode: true }));
+    this.teleopRecordStopButton.addEventListener('click', () => this.stopHumanTeleopRecording());
+    this._updateHumanRecorderUi();
 
     this.welcomeModal = document.getElementById('welcome-modal');
     document.getElementById('show-welcome-modal').addEventListener('click', e => this.welcomeModal.classList.add('is-active'));
@@ -559,6 +598,406 @@ export default class Simulator {
     this.freeCamera.layers.disable(2);
   }
 
+  _normalizeAction(action = {}) {
+    return {
+      steer: Math.clamp(Number(action.steer) || 0, -1, 1),
+      gas: Math.clamp(Number(action.gas) || 0, 0, 1),
+      brake: Math.clamp(Number(action.brake) || 0, 0, 1)
+    };
+  }
+
+  _laneInfoForPose() {
+    if (this.editor.lanePath.anchors.length <= 1)
+      return null;
+
+    const carRearAxle = this.car.rearAxlePosition;
+    const [station, latitude, aroundAnchorIndex] = this.editor.lanePath.stationLatitudeFromPosition(carRearAxle, this.aroundAnchorIndex);
+    this.aroundAnchorIndex = aroundAnchorIndex;
+
+    const [sample] = this.editor.lanePath.sampleStations(station, 1, 0);
+    const headingError = sample ? Math.wrapAngle(this.car.rotation - sample.rot) : 0;
+    const curvature = sample ? sample.curv : 0;
+
+    this.carStation = station;
+    return { station, latitude, headingError, curvature };
+  }
+
+  _dynamicObstaclePose(dynamicObstacle, time) {
+    const slPos = dynamicObstacle.positionAtTime(time);
+    const [sample] = this.editor.lanePath.sampleStations(slPos.x, 1, 0);
+    if (!sample) return null;
+
+    const rot = sample.rot;
+    const pos = THREE.Vector2.fromAngle(rot + Math.PI / 2).multiplyScalar(slPos.y).add(sample.pos);
+    return { x: pos.x, y: pos.y, rot };
+  }
+
+  _intersectsExpandedOrientedRect(point, rectCenter, rectRot, halfWidth, halfHeight, expandRadius) {
+    const dx = point.x - rectCenter.x;
+    const dy = point.y - rectCenter.y;
+    const cos = Math.cos(rectRot);
+    const sin = Math.sin(rectRot);
+
+    const localX = dx * cos + dy * sin;
+    const localY = -dx * sin + dy * cos;
+
+    return Math.abs(localX) <= halfWidth + expandRadius && Math.abs(localY) <= halfHeight + expandRadius;
+  }
+
+  _hasCollision() {
+    const carCenter = this.car.position;
+    const carRadius = Math.hypot(Car.HALF_CAR_LENGTH, Car.HALF_CAR_WIDTH) * 0.5;
+
+    for (const obstacle of this.staticObstacles) {
+      if (this._intersectsExpandedOrientedRect(
+        carCenter,
+        obstacle.pos,
+        obstacle.rot,
+        obstacle.width / 2,
+        obstacle.height / 2,
+        carRadius
+      )) {
+        return true;
+      }
+    }
+
+    for (const obstacle of this.dynamicObstacles) {
+      const pose = this._dynamicObstaclePose(obstacle, this.simulatedTime);
+      if (!pose) continue;
+
+      if (this._intersectsExpandedOrientedRect(
+        carCenter,
+        { x: pose.x, y: pose.y },
+        pose.rot,
+        obstacle.size.w,
+        obstacle.size.h,
+        carRadius
+      )) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  _nearestObstacleDistance() {
+    const carCenter = this.car.position;
+    let best = Number.POSITIVE_INFINITY;
+
+    this.staticObstacles.forEach(o => {
+      const d = carCenter.distanceTo(o.pos);
+      if (d < best) best = d;
+    });
+
+    this.dynamicObstacles.forEach(o => {
+      const pose = this._dynamicObstaclePose(o, this.simulatedTime);
+      if (!pose) return;
+      const d = Math.hypot(carCenter.x - pose.x, carCenter.y - pose.y);
+      if (d < best) best = d;
+    });
+
+    return Number.isFinite(best) ? best : null;
+  }
+
+  _buildObservation() {
+    const laneInfo = this._laneInfoForPose();
+    const roadHalfWidth = this.pathPlannerConfigEditor.config.roadWidth / 2;
+    const latitude = laneInfo ? laneInfo.latitude : 0;
+    const offroad = laneInfo ? Math.abs(latitude) > roadHalfWidth : false;
+
+    return {
+      time: this.simulatedTime,
+      speed: this.car.velocity,
+      steering: this.car.wheelAngle,
+      station: laneInfo ? laneInfo.station : 0,
+      latitude: latitude,
+      headingError: laneInfo ? laneInfo.headingError : 0,
+      curvature: laneInfo ? laneInfo.curvature : 0,
+      nearestObstacleDistance: this._nearestObstacleDistance(),
+      offroad: offroad,
+      collision: this._hasCollision()
+    };
+  }
+
+  _evaluateTransition(previousStation, controls, previousSteer = this.rlLastSteer) {
+    const laneInfo = this._laneInfoForPose();
+    const roadHalfWidth = this.pathPlannerConfigEditor.config.roadWidth / 2;
+
+    const station = laneInfo ? laneInfo.station : previousStation;
+    const latitude = laneInfo ? laneInfo.latitude : 0;
+    const progressReward = station - previousStation;
+    const lanePenalty = Math.abs(latitude) * this.rlConfig.lanePenaltyWeight;
+    const steerPenalty = Math.abs(controls.steer - previousSteer) * this.rlConfig.steerPenaltyWeight;
+    const brakePenalty = controls.brake * this.rlConfig.brakePenaltyWeight;
+
+    const offroad = laneInfo ? Math.abs(latitude) > roadHalfWidth : false;
+    const collision = this._hasCollision();
+
+    let reward = progressReward - lanePenalty - steerPenalty - brakePenalty;
+    if (offroad) reward -= this.rlConfig.offroadPenalty;
+    if (collision) reward -= this.rlConfig.collisionPenalty;
+
+    return {
+      station,
+      offroad,
+      collision,
+      terminated: offroad || collision,
+      reward,
+      nextSteer: controls.steer,
+      components: {
+        progress: progressReward,
+        lanePenalty: lanePenalty,
+        steerPenalty: steerPenalty,
+        brakePenalty: brakePenalty,
+        offroadPenalty: offroad ? this.rlConfig.offroadPenalty : 0,
+        collisionPenalty: collision ? this.rlConfig.collisionPenalty : 0
+      }
+    };
+  }
+
+  _simulateTick(dt, controlOverride = null, force = false) {
+    if (this.editor.enabled) return null;
+    if (!force && this.paused) return null;
+
+    this.simulatedTime += dt;
+
+    const prevCarPosition = this.car.position;
+    const prevCarRotation = this.car.rotation;
+
+    const manualControls = this.manualCarController.control(this.car.pose, this.car.wheelAngle, this.car.velocity, dt);
+    if (controlOverride === null && (manualControls.steer != 0 || manualControls.brake != 0 || manualControls.gas != 0))
+      this.enableManualMode();
+
+    let autonomousControls = { steer: 0, brake: 0, gas: 0 };
+    if (this.autonomousCarController)
+      autonomousControls = this.autonomousCarController.control(this.car.pose, this.car.wheelAngle, this.car.velocity, dt, this.carControllerMode == 'autonomous');
+    else if (this.autonomousCarController === null)
+      autonomousControls = { steer: 0, brake: 1, gas: 0 };
+
+    const controls = controlOverride || (this.carControllerMode == 'autonomous' ? autonomousControls : manualControls);
+
+    this.car.update(controls, dt);
+    this.physics.step(dt);
+    this.updateDynamicObjects(this.simulatedTime);
+
+    const carPosition = this.car.position;
+    const carRotation = this.car.rotation;
+
+    const positionOffset = { x: carPosition.x - prevCarPosition.x, y: 0, z: carPosition.y - prevCarPosition.y };
+    this.chaseCamera.position.add(positionOffset);
+    this.chaseCameraControls.target.set(carPosition.x, 0, carPosition.y);
+    this.chaseCameraControls.rotateLeft(carRotation - prevCarRotation);
+    this.chaseCameraControls.update();
+
+    this.topDownCamera.position.setX(carPosition.x);
+    this.topDownCamera.position.setZ(carPosition.y);
+    this.topDownCamera.rotation.z = -carRotation - Math.PI / 2;
+
+    const laneInfo = this._laneInfoForPose();
+    this.dashboard.update(controls, this.car.velocity, this.carStation, laneInfo ? laneInfo.latitude : null, this.simulatedTime, this.averagePlanTime.average);
+
+    this.lastAppliedControls = { steer: controls.steer, brake: controls.brake, gas: controls.gas };
+
+    if (this.trajectoryRecorder.enabled) {
+      this.trajectoryRecorder.frames.push({
+        t: this.simulatedTime,
+        action: { ...this.lastAppliedControls },
+        observation: this._buildObservation()
+      });
+    }
+
+    if (this.humanRecorder.enabled)
+      this._sampleHumanTeleop(dt, this.lastAppliedControls);
+
+    return { controls: this.lastAppliedControls };
+  }
+
+  _sampleHumanTeleop(dt, controls) {
+    if (this.humanRecorder.requireManualMode && this.carControllerMode !== 'manual')
+      return;
+
+    this.humanRecorder.elapsed += dt;
+    while (this.humanRecorder.elapsed >= this.humanRecorder.sampleInterval) {
+      this.humanRecorder.elapsed -= this.humanRecorder.sampleInterval;
+
+      const transition = this._evaluateTransition(this.humanRecorder.lastStation, controls, this.humanRecorder.lastSteer);
+      this.humanRecorder.lastStation = transition.station;
+      this.humanRecorder.lastSteer = transition.nextSteer;
+
+      this.humanRecorder.frames.push({
+        t: this.simulatedTime,
+        dt: this.humanRecorder.sampleInterval,
+        action: { ...controls },
+        observation: this._buildObservation(),
+        reward: transition.reward,
+        terminated: transition.terminated,
+        rewardComponents: transition.components
+      });
+
+      if (transition.terminated) {
+        this.humanRecorder.enabled = false;
+        this._updateHumanRecorderUi();
+        break;
+      }
+    }
+
+    this._updateHumanRecorderUi();
+  }
+
+  _updateHumanRecorderUi() {
+    if (!this.teleopRecordStartButton || !this.teleopRecordStopButton || !this.teleopRecordCountDom)
+      return;
+
+    const sampleCount = this.humanRecorder.frames.length;
+    this.teleopRecordCountDom.textContent = `${sampleCount} sample${sampleCount === 1 ? '' : 's'}`;
+
+    if (this.humanRecorder.enabled) {
+      this.teleopRecordStartButton.classList.add('is-hidden');
+      this.teleopRecordStopButton.classList.remove('is-hidden');
+    } else {
+      this.teleopRecordStopButton.classList.add('is-hidden');
+      this.teleopRecordStartButton.classList.remove('is-hidden');
+    }
+  }
+
+  setRLConfig(config = {}) {
+    Object.assign(this.rlConfig, config || {});
+    return { ...this.rlConfig };
+  }
+
+  envReset(options = {}) {
+    if (options.scenario) {
+      this.editor.loadJSON(options.scenario);
+      this.finalizeEditor(false);
+    } else if (options.scenarioCode) {
+      this._importScenarioCode(options.scenarioCode);
+    } else if (this.editor.enabled) {
+      this.finalizeEditor(false);
+    }
+
+    if (options.startMode == 'autonomous')
+      this.enableAutonomousMode();
+    else
+      this.enableManualMode();
+
+    this.pauseScenario();
+    this.rlEpisodeStep = 0;
+    this.rlLastSteer = 0;
+    const laneInfo = this._laneInfoForPose();
+    this.rlLastStation = laneInfo ? laneInfo.station : 0;
+
+    if (options.clearRecording === true)
+      this.clearTrajectoryRecording();
+
+    return {
+      observation: this._buildObservation(),
+      info: { mode: this.carControllerMode }
+    };
+  }
+
+  envStep(action, options = {}) {
+    const dt = Number(options.dt) > 0 ? Number(options.dt) : this.rlConfig.dt;
+    const repeat = Number(options.actionRepeat) > 0 ? Math.floor(options.actionRepeat) : this.rlConfig.actionRepeat;
+    const controls = this._normalizeAction(action);
+
+    let reward = 0;
+    let terminated = false;
+    let truncated = false;
+    let lastTransition = null;
+
+    for (let i = 0; i < repeat; i++) {
+      const previousStation = this.rlLastStation;
+      this._simulateTick(dt, controls, true);
+      lastTransition = this._evaluateTransition(previousStation, controls);
+      this.rlLastStation = lastTransition.station;
+      this.rlLastSteer = lastTransition.nextSteer;
+      reward += lastTransition.reward;
+      this.rlEpisodeStep += 1;
+
+      if (lastTransition.terminated) {
+        terminated = true;
+        break;
+      }
+
+      if (this.rlEpisodeStep >= this.rlConfig.maxSteps) {
+        truncated = true;
+        break;
+      }
+    }
+
+    const observation = this._buildObservation();
+    const info = {
+      step: this.rlEpisodeStep,
+      controls: { ...controls },
+      rewardComponents: lastTransition ? lastTransition.components : {}
+    };
+
+    return { observation, reward, terminated, truncated, info };
+  }
+
+  startTrajectoryRecording({ clear = true } = {}) {
+    if (clear) this.clearTrajectoryRecording();
+    this.trajectoryRecorder.enabled = true;
+  }
+
+  stopTrajectoryRecording() {
+    this.trajectoryRecorder.enabled = false;
+    return this.getTrajectoryRecording();
+  }
+
+  clearTrajectoryRecording() {
+    this.trajectoryRecorder.frames = [];
+  }
+
+  getTrajectoryRecording() {
+    return this.trajectoryRecorder.frames.slice();
+  }
+
+  startHumanTeleopRecording({ sampleHz = 10, clear = true, requireManualMode = true } = {}) {
+    const laneInfo = this._laneInfoForPose();
+
+    if (clear) this.clearHumanTeleopRecording();
+
+    this.humanRecorder.enabled = true;
+    this.humanRecorder.requireManualMode = !!requireManualMode;
+    this.humanRecorder.sampleInterval = 1 / Math.max(1, Number(sampleHz) || 10);
+    this.humanRecorder.elapsed = 0;
+    this.humanRecorder.lastStation = laneInfo ? laneInfo.station : 0;
+    this.humanRecorder.lastSteer = this.lastAppliedControls.steer || 0;
+
+    if (this.humanRecorder.requireManualMode)
+      this.enableManualMode();
+
+    this._updateHumanRecorderUi();
+
+    return {
+      sampleHz: 1 / this.humanRecorder.sampleInterval,
+      requireManualMode: this.humanRecorder.requireManualMode
+    };
+  }
+
+  stopHumanTeleopRecording() {
+    this.humanRecorder.enabled = false;
+    this._updateHumanRecorderUi();
+    return this.getHumanTeleopRecording();
+  }
+
+  clearHumanTeleopRecording() {
+    this.humanRecorder.frames = [];
+    this._updateHumanRecorderUi();
+  }
+
+  getHumanTeleopRecording() {
+    return {
+      metadata: {
+        sampleHz: 1 / this.humanRecorder.sampleInterval,
+        requireManualMode: this.humanRecorder.requireManualMode,
+        scenario: this.editor.scenarioToJSON()
+      },
+      frames: this.humanRecorder.frames.slice()
+    };
+  }
+
   hideWelcomeModal() {
     this.welcomeModal.classList.remove('is-active');
     window.localStorage.setItem(WELCOME_MODAL_KEY, 'hide');
@@ -733,56 +1172,7 @@ export default class Simulator {
 
     this.editor.update();
 
-    if (!this.editor.enabled && !this.paused) {
-      this.simulatedTime += dt;
-
-      const prevCarPosition = this.car.position;
-      const prevCarRotation = this.car.rotation;
-
-      const manualControls = this.manualCarController.control(this.car.pose, this.car.wheelAngle, this.car.velocity, dt);
-      if (manualControls.steer != 0 || manualControls.brake != 0 || manualControls.gas != 0)
-        this.enableManualMode();
-
-      let autonomousControls = { steer: 0, brake: 0, gas: 0};
-      if (this.autonomousCarController)
-        autonomousControls = this.autonomousCarController.control(this.car.pose, this.car.wheelAngle, this.car.velocity, dt, this.carControllerMode == 'autonomous') ;
-      else if (this.autonomousCarController === null)
-        autonomousControls = { steer: 0, brake: 1, gas: 0 };
-
-      const controls = this.carControllerMode == 'autonomous' ? autonomousControls : manualControls;
-
-      this.car.update(controls, dt);
-      this.physics.step(dt);
-
-      this.updateDynamicObjects(this.simulatedTime);
-
-      const carPosition = this.car.position;
-      const carRotation = this.car.rotation;
-      const carRearAxle = this.car.rearAxlePosition;
-      const carVelocity = this.car.velocity;
-
-      const positionOffset = { x: carPosition.x - prevCarPosition.x, y: 0, z: carPosition.y - prevCarPosition.y };
-      this.chaseCamera.position.add(positionOffset);
-      this.chaseCameraControls.target.set(carPosition.x, 0, carPosition.y);
-      this.chaseCameraControls.rotateLeft(carRotation - prevCarRotation);
-      this.chaseCameraControls.update();
-
-      this.topDownCamera.position.setX(carPosition.x);
-      this.topDownCamera.position.setZ(carPosition.y);
-      this.topDownCamera.rotation.z = -carRotation - Math.PI / 2
-
-      let latitude = null;
-
-      if (this.editor.lanePath.anchors.length > 1) {
-        const [s, l, aroundAnchorIndex] = this.editor.lanePath.stationLatitudeFromPosition(carRearAxle, this.aroundAnchorIndex);
-        this.aroundAnchorIndex = aroundAnchorIndex;
-
-        this.carStation = s;
-        latitude = l;
-      }
-
-      this.dashboard.update(controls, carVelocity, this.carStation, latitude, this.simulatedTime, this.averagePlanTime.average);
-    }
+    this._simulateTick(dt);
 
     if (!this.editor.enabled && this.plannerReady) {
       this.startPlanner(this.car.pose, this.carStation || 0);
