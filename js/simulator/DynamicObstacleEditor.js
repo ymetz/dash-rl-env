@@ -2,12 +2,13 @@ import DynamicObstacle from "../autonomy/DynamicObstacle.js";
 import PathPlannerConfigEditor from "./PathPlannerConfigEditor.js";
 
 export default class DynamicObstacleEditor {
-  constructor() {
+  constructor(onChanged = null) {
+    this.onChanged = onChanged;
     this.editorDom = document.getElementById('editor-dynamic-obstacles-box');
     this.formsContainer = document.getElementById('editor-dynamic-obstacle-forms');
     this.statsDynamicObstacles = document.getElementById('editor-stats-dynamic-obstacles');
 
-    document.getElementById('editor-add-dynamic-obstacle').addEventListener('click', this.addDynamicObstacle.bind(this));
+    document.getElementById('editor-add-dynamic-obstacle').addEventListener('click', () => this.addDynamicObstacle());
   }
 
   enable() {
@@ -50,7 +51,7 @@ export default class DynamicObstacleEditor {
     this.clearDynamicObstacles();
 
     json.forEach(o => {
-      const form = this.addDynamicObstacle();
+      const form = this.addDynamicObstacle(false);
 
       form['sPos'].value = o.p[0];
       form['lPos'].value = o.p[1];
@@ -59,6 +60,8 @@ export default class DynamicObstacleEditor {
       form['parallel'].checked = !!o.l;
       form['type'].selectedIndex = o.t;
     });
+
+    this._notifyChanged();
   }
 
   collectDynamicObstacles() {
@@ -82,12 +85,13 @@ export default class DynamicObstacleEditor {
     return obstacles;
   }
 
-  addDynamicObstacle() {
+  addDynamicObstacle(shouldNotify = true) {
     const index = this.formsContainer.getElementsByTagName('form').length + 1;
     const form = this.buildForm(index);
 
     this.formsContainer.appendChild(form);
     this.statsDynamicObstacles.textContent = this.formsContainer.getElementsByTagName('form').length;
+    if (shouldNotify) this._notifyChanged();
 
     return form;
   }
@@ -96,11 +100,13 @@ export default class DynamicObstacleEditor {
     this.formsContainer.removeChild(form);
     this.reindexForms();
     this.statsDynamicObstacles.textContent = this.formsContainer.getElementsByTagName('form').length;
+    this._notifyChanged();
   }
 
   clearDynamicObstacles() {
     this.formsContainer.innerHTML = '';
     this.statsDynamicObstacles.textContent = 0;
+    this._notifyChanged();
   }
 
   reindexForms() {
@@ -178,8 +184,13 @@ export default class DynamicObstacleEditor {
     template.innerHTML = html;
     const form = template.content.firstChild;
 
+    form.addEventListener('change', () => this._notifyChanged());
     form.getElementsByClassName('editor-remove-dynamic-obstacle')[0].addEventListener('click', e => this.removeDynamicObstacle(form));
 
     return form;
+  }
+
+  _notifyChanged() {
+    if (this.onChanged) this.onChanged();
   }
 }

@@ -1,7 +1,6 @@
 import Physics from "./physics/Physics.js";
 import Path from "./autonomy/Path.js";
 import CubicPath from "./autonomy/path-planning/CubicPath.js";
-import AutonomousController from "./autonomy/control/AutonomousController.js";
 import FollowController from "./autonomy/control/FollowController.js";
 import ManualController from "./autonomy/control/ManualController.js";
 import MapObject from "./objects/MapObject.js";
@@ -12,11 +11,8 @@ import Editor from "./simulator/Editor.js";
 import OrbitControls from "./simulator/OrbitControls.js";
 import TopDownCameraControls from "./simulator/TopDownCameraControls.js";
 import Dashboard from "./simulator/Dashboard.js";
-import GPGPU from "./GPGPU.js";
 import RoadLattice from "./autonomy/path-planning/RoadLattice.js";
-import PathPlanner from "./autonomy/path-planning/PathPlanner.js";
 import StaticObstacle from "./autonomy/StaticObstacle.js";
-import DynamicObstacle from "./autonomy/DynamicObstacle.js";
 import MovingAverage from "./autonomy/MovingAverage.js";
 import PathPlannerConfigEditor from "./simulator/PathPlannerConfigEditor.js";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
@@ -176,20 +172,43 @@ export default class Simulator {
   }
 
   _checkHashScenario() {
+    const search = new URLSearchParams(window.location.search);
+    const queryCode = search.get('scenario') || search.get('s') || search.get('config');
+
+    if (queryCode && this._importScenarioCode(queryCode)) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('scenario');
+      url.searchParams.delete('s');
+      url.searchParams.delete('config');
+      window.history.replaceState({}, '', url.toString());
+      return;
+    }
+
     if (!window.location.hash.startsWith('#/s/')) return;
 
     const [_hash, _s, code] = window.location.hash.split('/');
+    if (this._importScenarioCode(code))
+      window.location.hash = '';
+  }
 
+  _importScenarioCode(encoded) {
     try {
-      const json = JSON.parse(atob(decodeURIComponent(code)));
+      // Support regular base64, URL-safe base64, and URL-encoded values.
+      let normalized = decodeURIComponent(encoded).replace(/-/g, '+').replace(/_/g, '/');
+      const padding = normalized.length % 4;
+      if (padding > 0)
+        normalized += '='.repeat(4 - padding);
+
+      const json = JSON.parse(atob(normalized));
       this.editor.loadJSON(json);
       this.finalizeEditor();
       this.welcomeModal.classList.remove('is-active');
-      window.location.hash = '';
+      return true;
     } catch (e) {
       console.log('Error importing scenario code:');
-      console.log(code);
+      console.log(encoded);
       console.log(e);
+      return false;
     }
   }
 
@@ -287,6 +306,7 @@ export default class Simulator {
 
   enableEditor() {
     this.editor.enabled = true;
+    this.editor.setStartMode(this.carControllerMode || 'autonomous', false);
     this.plannerRunning = false;
 
     this.previousCamera = this.camera;
@@ -332,7 +352,11 @@ export default class Simulator {
       // The `false` value means the controller is waiting to be created after the first planning cycle.
       // This signals the simulator to use neutral controls instead of the hard brake used for the `null` value.
       this.autonomousCarController = false;
-      this.enableAutonomousMode();
+      const startsAutonomous = this.editor.startMode !== 'manual';
+      if (startsAutonomous)
+        this.enableAutonomousMode();
+      else
+        this.enableManualMode();
 
       if (!this.plannerRunning) {
         this.plannerReady = true;
@@ -343,9 +367,15 @@ export default class Simulator {
       this.carStation = 0;
       this.aroundAnchorIndex = null;
 
-      this.pauseScenario();
-      this.autonomousModeButton.classList.add('is-loading');
-      this.waitingForFirstPlan = true;
+      if (startsAutonomous) {
+        this.pauseScenario();
+        this.autonomousModeButton.classList.add('is-loading');
+        this.waitingForFirstPlan = true;
+      } else {
+        this.playScenario();
+        this.autonomousModeButton.classList.remove('is-loading');
+        this.waitingForFirstPlan = false;
+      }
     } else {
       this.dynamicObstacles = [];
     }

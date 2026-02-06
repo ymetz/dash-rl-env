@@ -4,7 +4,7 @@ export default class MapObject extends THREE.Object3D {
     super();
 
     this.geolocation = geolocation;
-    this.tilesGroup = null;
+    this.tileGroup = null;
 
     const tileSize = geolocation ? this.tileSizeInMeters() : 10;
     const grid = new THREE.GridHelper(MapObject.HALF_NUM_TILES * 8 * tileSize, MapObject.HALF_NUM_TILES * 8, 0x333333, 0x333333);
@@ -31,7 +31,7 @@ export default class MapObject extends THREE.Object3D {
   }
 
   drawTiles() {
-    if (this.tileGroup != null) this.remove(this.tilesGroup);
+    if (this.tileGroup != null) this.remove(this.tileGroup);
     this.tileGroup = new THREE.Group();
 
     const originTile = MapObject.worldToTile(MapObject.geoToWorld(this.geolocation));

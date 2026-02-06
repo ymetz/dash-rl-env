@@ -22,6 +22,8 @@ const HOVER_DYNAMIC_OBSTACLE_COLOR = 0xffcc33;
 const INITIAL_SPEED_FALLBACK = 20;
 const SPEED_LIMIT_FALLBACK = 20;
 const LANE_PREFERENCE_FALLBACK = +1;
+const START_MODE_FALLBACK = 'autonomous';
+const MAX_UNDO_ENTRIES = 200;
 
 export default class Editor {
   constructor(canvas, camera, scene) {
@@ -55,7 +57,7 @@ export default class Editor {
     scene.add(this.group);
 
     this.lanePath = new LanePath();
-    this.dynamicObstacleEditor = new DynamicObstacleEditor();
+    this.dynamicObstacleEditor = new DynamicObstacleEditor(() => this._commitHistory());
 
     this.editorPathButton = document.getElementById('editor-path');
     this.editorPathButton.addEventListener('click', e => this.changeEditMode('path'));
@@ -69,13 +71,27 @@ export default class Editor {
     this.speedLimitDom = document.getElementById('editor-speed-limit');
     this.laneLeftDom = document.getElementById('editor-lane-left');
     this.laneRightDom = document.getElementById('editor-lane-right');
+    this.startModeManualDom = document.getElementById('editor-start-manual');
+    this.startModeAutonomousDom = document.getElementById('editor-start-autonomous');
 
-    this.laneLeftDom.addEventListener('click', e => this._changeLanePreference(-1));
-    this.laneRightDom.addEventListener('click', e => this._changeLanePreference(+1));
+    this.laneLeftDom.addEventListener('click', () => {
+      this._changeLanePreference(-1);
+      this._commitHistory();
+    });
+    this.laneRightDom.addEventListener('click', () => {
+      this._changeLanePreference(+1);
+      this._commitHistory();
+    });
+    this.startModeManualDom.addEventListener('click', () => this.setStartMode('manual'));
+    this.startModeAutonomousDom.addEventListener('click', () => this.setStartMode('autonomous'));
+    this.initialSpeedDom.addEventListener('change', () => this._commitHistory());
+    this.speedLimitDom.addEventListener('change', () => this._commitHistory());
 
     this.initialSpeedDom.value = INITIAL_SPEED_FALLBACK;
     this.speedLimitDom.value = SPEED_LIMIT_FALLBACK;
     this._changeLanePreference(LANE_PREFERENCE_FALLBACK);
+    this.startMode = START_MODE_FALLBACK;
+    this._changeStartMode(START_MODE_FALLBACK);
 
     this.statsRoadLength = document.getElementById('editor-stats-road-length');
     this.statsStaticObstacles = document.getElementById('editor-stats-static-obstacles');
@@ -103,17 +119,32 @@ export default class Editor {
     });
     document.addEventListener('click', () => editorClearOptions.classList.add('is-hidden'));
 
-    document.getElementById('editor-clear-obstacles').addEventListener('click', this.clearStaticObstacles.bind(this));
-    document.getElementById('editor-clear-dynamic-obstacles').addEventListener('click', this.dynamicObstacleEditor.clearDynamicObstacles.bind(this.dynamicObstacleEditor));
-    document.getElementById('editor-clear-path').addEventListener('click', this.clearPath.bind(this));
-    document.getElementById('editor-clear-all').addEventListener('click', this.clearAll.bind(this));
+    document.getElementById('editor-clear-obstacles').addEventListener('click', () => {
+      this.clearStaticObstacles();
+      this._commitHistory();
+    });
+    document.getElementById('editor-clear-dynamic-obstacles').addEventListener('click', () => this.dynamicObstacleEditor.clearDynamicObstacles());
+    document.getElementById('editor-clear-path').addEventListener('click', () => {
+      this.clearPath();
+      this._commitHistory();
+    });
+    document.getElementById('editor-clear-all').addEventListener('click', () => {
+      this.clearAll();
+      this._commitHistory();
+    });
 
     document.getElementById('editor-save').addEventListener('click', this.saveClicked.bind(this));
     document.getElementById('editor-load').addEventListener('click', this.loadClicked.bind(this));
     document.getElementById('editor-share').addEventListener('click', this.shareClicked.bind(this));
+    this.undoButton = document.getElementById('editor-undo');
+    this.undoButton.addEventListener('click', this.undo.bind(this));
 
     document.addEventListener('keydown', this.keyDown.bind(this));
     document.addEventListener('keyup', this.keyUp.bind(this));
+
+    this.undoHistory = [];
+    this.isRestoringHistory = false;
+    this.isApplyingScenario = false;
 
     const resolution = new THREE.Vector2(this.canvas.clientWidth, this.canvas.clientHeight);
     this.centerlineObject = new Line2(
@@ -172,6 +203,8 @@ export default class Editor {
         this.rightBoundaryObject.material.resolution.copy(resolution);
       }, 0);
     });
+
+    this._commitHistory();
   }
 
   get enabled() {
@@ -218,7 +251,8 @@ export default class Editor {
       c: {
         s: this.initialSpeedDom.value,
         sl: this.speedLimitDom.value,
-        lp: this.lanePreference
+        lp: this.lanePreference,
+        sm: this.startMode === 'manual' ? 'm' : 'a'
       },
       v: 1
     };
@@ -231,37 +265,54 @@ export default class Editor {
       throw new Error('Incomplete lane path.');
     }
 
-    this.clearAll();
-
-    this.lanePath = new LanePath();
-    for (let i = 0; i < json.p.length; i += 2) {
-      this.addPoint(new THREE.Vector2(json.p[i], json.p[i + 1]), false);
-    }
-    this.lanePath.resampleAll();
-    this.rebuildPathGeometry();
-
-    json.s.forEach(o => {
-      const staticObstacle = StaticObstacle.fromJSON(o);
-      this.addStaticObstacle(new THREE.Vector3(staticObstacle.pos.x, 0, staticObstacle.pos.y), staticObstacle.width, staticObstacle.height, staticObstacle.rot)
-    });
-
-    this.dynamicObstacleEditor.loadJSON(json.d);
-
-    let initialSpeed = INITIAL_SPEED_FALLBACK;
-    let speedLimit = SPEED_LIMIT_FALLBACK;
-    try { initialSpeed = json.c.s; } catch (e) { }
-    try { speedLimit = json.c.sl; } catch (e) { }
-
-    this.initialSpeedDom.value = initialSpeed;
-    this.speedLimitDom.value = speedLimit;
-
-    let lanePreference = LANE_PREFERENCE_FALLBACK;
+    this.isApplyingScenario = true;
     try {
-      if (typeof(json.c.lp) === 'number')
-        lanePreference = Math.sign(json.c.lp) || LANE_PREFERENCE_FALLBACK;
-    } catch (e) { }
+      this.clearAll();
 
-    this._changeLanePreference(lanePreference);
+      this.lanePath = new LanePath();
+      for (let i = 0; i < json.p.length; i += 2) {
+        this.addPoint(new THREE.Vector2(json.p[i], json.p[i + 1]), false);
+      }
+      this.lanePath.resampleAll();
+      this.rebuildPathGeometry();
+
+      json.s.forEach(o => {
+        const staticObstacle = StaticObstacle.fromJSON(o);
+        this.addStaticObstacle(new THREE.Vector3(staticObstacle.pos.x, 0, staticObstacle.pos.y), staticObstacle.width, staticObstacle.height, staticObstacle.rot)
+      });
+
+      this.dynamicObstacleEditor.loadJSON(json.d);
+
+      let initialSpeed = INITIAL_SPEED_FALLBACK;
+      let speedLimit = SPEED_LIMIT_FALLBACK;
+      try { initialSpeed = json.c.s; } catch (e) { }
+      try { speedLimit = json.c.sl; } catch (e) { }
+
+      this.initialSpeedDom.value = initialSpeed;
+      this.speedLimitDom.value = speedLimit;
+
+      let lanePreference = LANE_PREFERENCE_FALLBACK;
+      try {
+        if (typeof(json.c.lp) === 'number')
+          lanePreference = Math.sign(json.c.lp) || LANE_PREFERENCE_FALLBACK;
+      } catch (e) { }
+
+      this._changeLanePreference(lanePreference);
+
+      let startMode = START_MODE_FALLBACK;
+      try {
+        if (json.c.sm === 'm' || json.c.sm === 'manual')
+          startMode = 'manual';
+        else if (json.c.sm === 'a' || json.c.sm === 'autonomous')
+          startMode = 'autonomous';
+      } catch (e) { }
+
+      this._changeStartMode(startMode);
+    } finally {
+      this.isApplyingScenario = false;
+    }
+
+    this._commitHistory();
   }
 
   update() {
@@ -507,7 +558,15 @@ export default class Editor {
   }
 
   keyDown(event) {
-    if (event.repeat || this.editMode != 'path' && this.editMode != 'staticObstacles') return;
+    if (event.repeat) return;
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() == 'z') {
+      this.undo();
+      event.preventDefault();
+      return;
+    }
+
+    if (this.editMode != 'path' && this.editMode != 'staticObstacles') return;
 
     if (event.key == 'Shift') {
       this.removeMode = true;
@@ -548,6 +607,7 @@ export default class Editor {
         if (this.removeMode) {
           this.removePoint(picked.object);
           this.rebuildPathGeometry();
+          this._commitHistory();
         } else {
           this.canvas.classList.remove('editor-grab');
           this.canvas.classList.add('editor-grabbing');
@@ -560,6 +620,7 @@ export default class Editor {
         if (intersection != null) {
           this.addPoint(new THREE.Vector2(intersection.x, intersection.z));
           this.rebuildPathGeometry();
+          this._commitHistory();
         }
       }
     } else if (this.editMode == 'staticObstacles') {
@@ -571,6 +632,7 @@ export default class Editor {
       if (picked) {
         if (this.removeMode) {
           this.removeStaticObstacle(picked.object);
+          this._commitHistory();
         } else {
           this.canvas.classList.remove('editor-grab');
           this.canvas.classList.add('editor-grabbing');
@@ -602,6 +664,9 @@ export default class Editor {
   mouseUp(event) {
     if (!this.isEnabled || event.button != 0) return;
 
+    const movedPoint = this.draggingPoint !== null;
+    const movedObstacle = this.draggingObstacle !== null && this.draggingObstacle !== true;
+
     if (this.draggingObstacle === true) {
       this.group.remove(this.draggingObstaclePreview);
       this.draggingObstaclePreview = null;
@@ -615,8 +680,12 @@ export default class Editor {
       if (intersection != null) {
         const [center, width, height] = this._dimensionsFromRect(this.dragOffset, intersection);
         this.addStaticObstacle(center, width, height);
+        this._commitHistory();
       }
     }
+
+    if (movedPoint || movedObstacle)
+      this._commitHistory();
 
     this.draggingPoint = null;
     this.draggingObstacle = null;
@@ -648,6 +717,54 @@ export default class Editor {
       this.laneRightDom.classList.remove('is-selected');
       this.laneLeftDom.classList.remove('is-outlined');
       this.laneLeftDom.classList.add('is-selected');
+    }
+  }
+
+  _changeStartMode(mode) {
+    this.startMode = mode == 'manual' ? 'manual' : 'autonomous';
+
+    if (this.startMode == 'manual') {
+      this.startModeAutonomousDom.classList.add('is-outlined');
+      this.startModeAutonomousDom.classList.remove('is-selected');
+      this.startModeManualDom.classList.remove('is-outlined');
+      this.startModeManualDom.classList.add('is-selected');
+    } else {
+      this.startModeManualDom.classList.add('is-outlined');
+      this.startModeManualDom.classList.remove('is-selected');
+      this.startModeAutonomousDom.classList.remove('is-outlined');
+      this.startModeAutonomousDom.classList.add('is-selected');
+    }
+  }
+
+  setStartMode(mode, saveHistory = true) {
+    this._changeStartMode(mode);
+    if (saveHistory) this._commitHistory();
+  }
+
+  _commitHistory() {
+    if (this.isRestoringHistory || this.isApplyingScenario) return;
+
+    const snapshot = JSON.stringify(this.scenarioToJSON());
+    const historyLength = this.undoHistory.length;
+
+    if (historyLength == 0 || this.undoHistory[historyLength - 1] !== snapshot) {
+      this.undoHistory.push(snapshot);
+
+      if (this.undoHistory.length > MAX_UNDO_ENTRIES)
+        this.undoHistory.shift();
+    }
+  }
+
+  undo() {
+    if (this.undoHistory.length <= 1) return;
+
+    this.undoHistory.pop();
+    const previousSnapshot = this.undoHistory[this.undoHistory.length - 1];
+    this.isRestoringHistory = true;
+    try {
+      this.loadJSON(JSON.parse(previousSnapshot));
+    } finally {
+      this.isRestoringHistory = false;
     }
   }
 

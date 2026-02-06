@@ -208,6 +208,21 @@
                             </div>
                         </div>
                     </div>
+                    <div class="field is-horizontal">
+                        <div class="field-label is-small" style="flex-grow: 100;">
+                            <label class="label has-text-grey-light">Start Mode</label>
+                        </div>
+                        <div class="field-body">
+                            <div class="field has-addons" style="width: 180px;">
+                                <div class="control">
+                                    <div id="editor-start-manual" class="button is-small is-dark is-outlined is-inverted">Manual</div>
+                                </div>
+                                <div class="control">
+                                    <div id="editor-start-autonomous" class="button is-small is-dark is-outlined is-inverted">Autonomous</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div id="editor-dynamic-obstacles-box" class="gui-box is-hidden">
                     <div class="is-clearfix">
@@ -379,7 +394,12 @@
                         </div>
                     </div>
                     <div class="field" style="position: relative;">
-                        <div class="control">
+                        <div class="control has-addons">
+                            <span id="editor-undo" class="button is-small is-dark is-outlined is-inverted" title="Undo">
+                                <span class="icon is-medium">
+                                    <i class="fas fa-lg fa-arrow-left"></i>
+                                </span>
+                            </span>
                             <span id="editor-clear" class="button is-small is-danger">Clear&hellip;</span>
                             <div id="editor-clear-options" class="gui-box is-hidden">
                                 <div class="buttons">
