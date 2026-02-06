@@ -104,18 +104,24 @@ I haven't had any luck getting the planner to run on a mobile browser. The embed
 
 ## Development
 
-Dash is designed to run completely offline on the `file://` protocol with no local server needed to serve resources. However, if any changes are made, Webpack is used to rebuild the sources into separate app and worker distributions. Development dependencies are downloaded with [npm](https://www.npmjs.com/get-npm).
+Dash is built with [Vite](https://vitejs.dev/). Install dependencies with [npm](https://www.npmjs.com/get-npm), then use the commands below.
 
-After making changes, build the project with:
+Start a local dev server with hot reload:
+
+```
+npm run dev
+```
+
+Build a production bundle:
 
 ```
 npm run build
 ```
 
-Changes can be watched and rebuilt automatically using:
+Preview the production bundle locally:
 
 ```
-npm run watch
+npm run preview
 ```
 
 ## License

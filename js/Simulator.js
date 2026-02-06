@@ -24,7 +24,7 @@ const WELCOME_MODAL_KEY = 'dash_WelcomeModal';
 
 export default class Simulator {
   constructor(domElement) {
-    this.pathPlannerWorker = new Worker(URL.createObjectURL(new Blob([`(${dash_initPathPlannerWorker.toString()})()`], { type: 'text/javascript' })));
+    this.pathPlannerWorker = new Worker(new URL('../workers/PathPlannerWorker.js', import.meta.url), { type: 'module' });
     this.pathPlannerWorker.onmessage = this.receivePlannedPath.bind(this);
     this.pathPlannerConfigEditor = new PathPlannerConfigEditor();
 

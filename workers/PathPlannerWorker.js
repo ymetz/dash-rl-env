@@ -1,11 +1,13 @@
-import THREE from "script-loader!../vendor/three.js";
-import Utils from "script-loader!../js/Utils.js";
-import PathPlanner from "../js/autonomy/path-planning/PathPlanner.js";
-import LanePath from "../js/autonomy/LanePath.js";
-import StaticObstacle from "../js/autonomy/StaticObstacle.js";
-import DynamicObstacle from "../js/autonomy/DynamicObstacle.js";
+import * as THREE from 'three';
+import '../js/Utils.js';
+import PathPlanner from '../js/autonomy/path-planning/PathPlanner.js';
+import LanePath from '../js/autonomy/LanePath.js';
+import StaticObstacle from '../js/autonomy/StaticObstacle.js';
+import DynamicObstacle from '../js/autonomy/DynamicObstacle.js';
 
 function init() {
+  globalThis.THREE = THREE;
+
   let pathPlanner;
   try {
     pathPlanner = new PathPlanner();
@@ -40,8 +42,4 @@ function init() {
   };
 }
 
-if (typeof(window) === 'undefined') {
-  init();
-} else {
-  window.dash_initPathPlannerWorker = init;
-}
+init();
